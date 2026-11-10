@@ -68,7 +68,7 @@
       }
 
       const d3 = window.d3;
-      const csv = await d3.csv("./warming_by_decade.csv");
+      const csv = await d3.csv("warming_by_decade.csv");
 
       const requiredColumns = ["decade", "latitude", "anomaly"];
       const missingColumns = requiredColumns.filter(name => !csv.columns.includes(name));
