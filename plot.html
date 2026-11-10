@@ -1,180 +1,259 @@
-<main class="wrap">
-  <section>
-    <h2>How does warming vary across latitudes and over time?</h2>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Warming Across Latitudes</title>
+  <style>
+    body {
+      max-width: 950px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      font: 1rem/1.5 system-ui, sans-serif;
+      color: #172936;
+    }
+
+    #heatmap {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    #detail {
+      min-height: 1.5em;
+    }
+
+    .source {
+      color: #52616b;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>How does warming vary across latitudes and over time?</h1>
     <p>Each column is a decade. Hover over a cell to see its value, or click to pin it.</p>
 
-    <svg id="heatmap" viewBox="0 0 900 380"
-         role="img" aria-label="Temperature anomalies by decade and latitude">
-    </svg>
+    <p id="status" role="status">Loading temperature data…</p>
 
-    <div class="legend">
-      <span>Temperature anomaly (°C)</span>
-      <svg id="heatmap-key" width="200" height="38" style="width: 200px"
-           role="img" aria-label="Blue is cooler and red is warmer">
-      </svg>
-    </div>
+    <section id="chart" hidden>
+      <svg id="heatmap" viewBox="0 0 900 380"
+           role="img" aria-label="Temperature anomalies by decade and latitude"></svg>
 
-    <p id="heatmap-detail" style="min-height: 1.5em"></p>
-    <p class="hint">CMIP6 CanESM5 simulation · Baseline 1850–1879</p>
-  </section>
-</main>
+      <div class="legend">
+        <span>Temperature anomaly (°C)</span>
+        <svg id="color-key" width="210" height="38"
+             role="img" aria-label="Blue is cooler and red is warmer"></svg>
+      </div>
 
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+      <p id="detail"></p>
+      <p class="source">CMIP6 CanESM5 simulation · Baseline 1850–1879</p>
+    </section>
+  </main>
 
-<script type="module">
-  const rows = await d3.csv("./warming_by_decade.csv", row => ({
-    decade: +row.decade,
-    latitude: +row.latitude,
-    anomaly: +row.anomaly
-  }));
-  
-const latitudes = [...new Set(rows.map(row => row.latitude))]
-  .sort((a, b) => a - b);
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script type="module">
+    const status = document.querySelector("#status");
 
-const periods = Array.from(d3.group(rows, row => row.decade), ([start, group]) => {
-  const byLatitude = new Map(group.map(row => [row.latitude, row.anomaly]));
+    try {
+      if (!window.d3) {
+        throw new Error("D3 could not load. Check your internet connection and reload.");
+      }
 
-  return {
-    start,
-    end: Math.min(start + 9, 2014),
-    values: latitudes.map(latitude => byLatitude.get(latitude))
-  };
-}).sort((a, b) => a.start - b.start);
+      const d3 = window.d3;
+      const csv = await d3.csv("./warming_by_decade.csv");
 
-  const svg = d3.select("#heatmap");
-  const key = d3.select("#heatmap-key");
-  const detail = d3.select("#heatmap-detail");
+      const requiredColumns = ["decade", "latitude", "anomaly"];
+      const missingColumns = requiredColumns.filter(name => !csv.columns.includes(name));
 
-  const left = 58;
-  const right = 880;
-  const top = 16;
-  const bottom = 345;
+      if (missingColumns.length) {
+        throw new Error(
+          `Missing CSV columns: ${missingColumns.join(", ")}. ` +
+          `Found: ${csv.columns.join(", ") || "none"}.`
+        );
+      }
 
-  // One rectangle for each decade and latitude band.
-  const cells = periods.flatMap(period =>
-    period.values.map((anomaly, i) => ({
-      start: period.start,
-      end: period.end,
-      latitude: latitudes[i],
-      south: i === 0 ? -90 : (latitudes[i - 1] + latitudes[i]) / 2,
-      north: i === latitudes.length - 1 ? 90 : (latitudes[i] + latitudes[i + 1]) / 2,
-      anomaly
-    }))
-  );
+      // Convert CSV text to numbers. Keep blank values as missing.
+      function toNumber(value) {
+        return value?.trim() ? Number(value) : NaN;
+      }
 
-  const x = d3.scaleBand()
-    .domain(periods.map(period => period.start))
-    .range([left, right]);
+      const rows = csv.map(row => ({
+        decade: toNumber(row.decade),
+        latitude: toNumber(row.latitude),
+        anomaly: toNumber(row.anomaly)
+      })).filter(row =>
+        Number.isInteger(row.decade) &&
+        Number.isFinite(row.latitude) &&
+        Math.abs(row.latitude) <= 90
+      );
 
-  const y = d3.scaleLinear()
-    .domain([-90, 90])
-    .range([bottom, top]);
+      const cells = rows.filter(row => Number.isFinite(row.anomaly));
 
-  const limit = Math.ceil(d3.max(cells, cell => Math.abs(cell.anomaly)));
-  const color = d3.scaleLinear()
-    .domain([-limit, 0, limit])
-    .range(["#226586", "#fbf6eb", "#ad3423"])
-    .interpolate(d3.interpolateLab);
+      if (cells.length === 0) {
+        throw new Error(
+          "The CSV has no plottable rows. Use numeric values like 1850, -30, and 0.25."
+        );
+      }
 
-  function formatLatitude(value) {
-    if (value === 0) return "0°";
-    return `${Math.abs(value)}°${value < 0 ? "S" : "N"}`;
-  }
+      const decades = [...new Set(rows.map(row => row.decade))].sort((a, b) => a - b);
+      const latitudes = [...new Set(rows.map(row => row.latitude))].sort((a, b) => a - b);
 
-  const rectangles = svg.append("g")
-    .selectAll("rect")
-    .data(cells)
-    .join("rect")
-    .attr("x", cell => x(cell.start))
-    .attr("y", cell => y(cell.north))
-    .attr("width", x.bandwidth())
-    .attr("height", cell => y(cell.south) - y(cell.north))
-    .attr("fill", cell => color(cell.anomaly))
-    .style("cursor", "pointer");
+      // Place the edge of each latitude band halfway to its neighbor.
+      const bandEdges = new Map(latitudes.map((latitude, i) => [
+        latitude,
+        {
+          south: i === 0 ? -90 : (latitudes[i - 1] + latitude) / 2,
+          north: i === latitudes.length - 1 ? 90 : (latitude + latitudes[i + 1]) / 2
+        }
+      ]));
 
-  svg.append("g")
-    .attr("transform", `translate(0,${bottom})`)
-    .call(d3.axisBottom(x)
-      .tickValues(x.domain().filter((_, i) => i % 2 === 0))
-      .tickFormat(d3.format("d")));
+      const svg = d3.select("#heatmap");
+      const key = d3.select("#color-key");
+      const detail = d3.select("#detail");
 
-  svg.append("g")
-    .attr("transform", `translate(${left},0)`)
-    .call(d3.axisLeft(y)
-      .tickValues([-90, -60, -30, 0, 30, 60, 90])
-      .tickFormat(formatLatitude));
+      const left = 58;
+      const right = 880;
+      const top = 16;
+      const bottom = 345;
 
-  // Mark the equator and keep the selection above the cells.
-  svg.append("line")
-    .attr("x1", left).attr("x2", right)
-    .attr("y1", y(0)).attr("y2", y(0))
-    .attr("stroke", "#172936")
-    .attr("opacity", 0.4)
-    .attr("pointer-events", "none");
+      const x = d3.scaleBand()
+        .domain(decades)
+        .range([left, right]);
 
-  const outline = svg.append("rect")
-    .attr("y", top)
-    .attr("width", x.bandwidth())
-    .attr("height", bottom - top)
-    .attr("fill", "none")
-    .attr("stroke", "#172936")
-    .attr("stroke-width", 2)
-    .attr("pointer-events", "none")
-    .attr("visibility", "hidden");
+      const y = d3.scaleLinear()
+        .domain([-90, 90])
+        .range([bottom, top]);
 
-  const dot = svg.append("circle")
-    .attr("r", 4)
-    .attr("fill", "white")
-    .attr("stroke", "#172936")
-    .attr("stroke-width", 2)
-    .attr("pointer-events", "none")
-    .attr("visibility", "hidden");
+      const limit = Math.max(1, Math.ceil(d3.max(cells, cell => Math.abs(cell.anomaly))));
 
-  const legendX = d3.scaleLinear().domain([-limit, limit]).range([10, 190]);
+      const color = d3.scaleLinear()
+        .domain([-limit, 0, limit])
+        .range(["#226586", "#fbf6eb", "#ad3423"])
+        .interpolate(d3.interpolateLab);
 
-  key.selectAll("rect")
-    .data(d3.range(180))
-    .join("rect")
-    .attr("x", i => i + 10)
-    .attr("y", 3)
-    .attr("width", 1)
-    .attr("height", 12)
-    .attr("fill", i => color(legendX.invert(i + 10.5)));
+      function formatLatitude(value) {
+        if (value === 0) return "0°";
+        return `${Math.abs(value)}°${value < 0 ? "S" : "N"}`;
+      }
 
-  key.append("g")
-    .attr("transform", "translate(0,15)")
-    .call(d3.axisBottom(legendX)
-      .tickValues([-limit, 0, limit])
-      .tickFormat(value => value === 0 ? "0" : d3.format("+d")(value)));
+      const rectangles = svg.append("g")
+        .selectAll("rect")
+        .data(cells)
+        .join("rect")
+        .attr("x", cell => x(cell.decade))
+        .attr("y", cell => y(bandEdges.get(cell.latitude).north))
+        .attr("width", x.bandwidth())
+        .attr("height", cell => {
+          const { south, north } = bandEdges.get(cell.latitude);
+          return y(south) - y(north);
+        })
+        .attr("fill", cell => color(cell.anomaly))
+        .style("cursor", "pointer");
 
-  let pinnedCell = null;
-  const prompt = "Hover over a cell to see its temperature anomaly.";
-  detail.text(prompt);
+      svg.append("g")
+        .attr("transform", `translate(0,${bottom})`)
+        .call(d3.axisBottom(x)
+          .tickValues(decades.filter((_, i) => i % 2 === 0))
+          .tickFormat(d3.format("d")));
 
-  function showDetails(cell) {
-    detail.text(
-      `${cell.start}–${cell.end} · ` +
-      `${formatLatitude(+cell.latitude.toFixed(1))} · ` +
-      `${d3.format("+.2f")(cell.anomaly)} °C`
-    );
-  }
+      svg.append("g")
+        .attr("transform", `translate(${left},0)`)
+        .call(d3.axisLeft(y)
+          .tickValues([-90, -60, -30, 0, 30, 60, 90])
+          .tickFormat(formatLatitude));
 
-  rectangles
-    .on("pointerenter", (_, cell) => showDetails(cell))
-    .on("click", (_, cell) => {
-      pinnedCell = cell;
-      outline.attr("x", x(cell.start)).attr("visibility", "visible");
-      dot.attr("cx", x(cell.start) + x.bandwidth() / 2)
-        .attr("cy", y(cell.latitude))
-        .attr("visibility", "visible");
-      showDetails(cell);
-    });
+      svg.append("line")
+        .attr("x1", left)
+        .attr("x2", right)
+        .attr("y1", y(0))
+        .attr("y2", y(0))
+        .attr("stroke", "#172936")
+        .attr("opacity", 0.4)
+        .attr("pointer-events", "none");
 
-  svg.on("pointerleave", () => {
-    if (pinnedCell) {
-      showDetails(pinnedCell);
-    } else {
+      const outline = svg.append("rect")
+        .attr("y", top)
+        .attr("width", x.bandwidth())
+        .attr("height", bottom - top)
+        .attr("fill", "none")
+        .attr("stroke", "#172936")
+        .attr("stroke-width", 2)
+        .attr("pointer-events", "none")
+        .attr("visibility", "hidden");
+
+      const dot = svg.append("circle")
+        .attr("r", 4)
+        .attr("fill", "white")
+        .attr("stroke", "#172936")
+        .attr("stroke-width", 2)
+        .attr("pointer-events", "none")
+        .attr("visibility", "hidden");
+
+      const legendX = d3.scaleLinear()
+        .domain([-limit, limit])
+        .range([12, 198]);
+
+      key.selectAll("rect")
+        .data(d3.range(12, 198))
+        .join("rect")
+        .attr("x", pixel => pixel)
+        .attr("y", 3)
+        .attr("width", 1)
+        .attr("height", 12)
+        .attr("fill", pixel => color(legendX.invert(pixel + 0.5)));
+
+      key.append("g")
+        .attr("transform", "translate(0,15)")
+        .call(d3.axisBottom(legendX)
+          .tickValues([-limit, 0, limit])
+          .tickFormat(value => value === 0 ? "0" : d3.format("+d")(value)));
+
+      let pinnedCell = null;
+      const prompt = "Hover over a cell to see its temperature anomaly.";
+      const formatAnomaly = d3.format("+.2f");
       detail.text(prompt);
+
+      function showDetails(cell) {
+        const end = Math.min(cell.decade + 9, 2014);
+        const latitude = formatLatitude(+cell.latitude.toFixed(1));
+        detail.text(
+          `${cell.decade}–${end} · ${latitude} · ${formatAnomaly(cell.anomaly)} °C`
+        );
+      }
+
+      rectangles
+        .on("pointerenter", (_, cell) => showDetails(cell))
+        .on("click", (_, cell) => {
+          pinnedCell = cell;
+          outline.attr("x", x(cell.decade)).attr("visibility", "visible");
+          dot.attr("cx", x(cell.decade) + x.bandwidth() / 2)
+            .attr("cy", y(cell.latitude))
+            .attr("visibility", "visible");
+          showDetails(cell);
+        });
+
+      svg.on("pointerleave", () => {
+        if (pinnedCell) {
+          showDetails(pinnedCell);
+        } else {
+          detail.text(prompt);
+        }
+      });
+
+      document.querySelector("#chart").hidden = false;
+      status.hidden = true;
+    } catch (error) {
+      status.textContent = `Could not display the heatmap. ${error.message}`;
+      console.error(error);
     }
-  });
-</script>
+  </script>
+</body>
+</html>
