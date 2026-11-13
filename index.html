@@ -38,7 +38,7 @@
 </head>
 <body>
   <main>
-    <h1>How does warming vary across latitudes and over time?</h1>
+    <h1>How Do Warming Patterns Vary Across Latitudes and Over Time?</h1>
     <p>Each column is a decade. Hover over a cell to see its value, or click to pin it.</p>
 
     <p id="status" role="status">Loading temperature data…</p>
@@ -70,7 +70,7 @@
       const d3 = window.d3;
       const csv = await d3.csv("warming_by_decade.csv");
 
-      const requiredColumns = ["decade", "latitude", "anomaly"];
+      const requiredColumns = ["decade", "latitude", "warming"];
       const missingColumns = requiredColumns.filter(name => !csv.columns.includes(name));
 
       if (missingColumns.length) {
@@ -80,17 +80,23 @@
         );
       }
 
-      // Convert CSV text to numbers. Keep blank values as missing.
       function toNumber(value) {
         return value?.trim() ? Number(value) : NaN;
       }
 
-      const rows = csv.map(row => ({
-        decade: toNumber(row.decade),
-        latitude: toNumber(row.latitude),
-        anomaly: toNumber(row.anomaly)
-      })).filter(row =>
+      const rows = csv.map(row => {
+        const range = /^(\d{4})\s*[-–]\s*(\d{4})$/.exec(row.decade.trim());
+        const decade = range ? Number(range[1]) : toNumber(row.decade);
+
+        return {
+          decade,
+          endYear: range ? Number(range[2]) : Math.min(decade + 9, 2014),
+          latitude: toNumber(row.latitude),
+          anomaly: toNumber(row.warming)
+        };
+      }).filter(row =>
         Number.isInteger(row.decade) &&
+        row.endYear >= row.decade &&
         Number.isFinite(row.latitude) &&
         Math.abs(row.latitude) <= 90
       );
@@ -99,7 +105,8 @@
 
       if (cells.length === 0) {
         throw new Error(
-          "The CSV has no plottable rows. Use numeric values like 1850, -30, and 0.25."
+          "The CSV has no plottable rows. Use a decade like 1850 or 1850-1859 " +
+          "and numeric latitude and warming values."
         );
       }
 
@@ -222,10 +229,9 @@
       detail.text(prompt);
 
       function showDetails(cell) {
-        const end = Math.min(cell.decade + 9, 2014);
         const latitude = formatLatitude(+cell.latitude.toFixed(1));
         detail.text(
-          `${cell.decade}–${end} · ${latitude} · ${formatAnomaly(cell.anomaly)} °C`
+          `${cell.decade}–${cell.endYear} · ${latitude} · ${formatAnomaly(cell.anomaly)} °C`
         );
       }
 
